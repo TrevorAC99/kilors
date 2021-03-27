@@ -5,7 +5,7 @@ use std::{
     usize,
 };
 
-use crossterm::{cursor::{Hide, MoveTo, Show}, event::{read, Event, KeyCode, KeyEvent}, execute, terminal::{Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode}};
+use crossterm::{cursor::{Hide, MoveTo, Show}, event::{read, Event, KeyCode, KeyEvent}, execute, terminal::{Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode, size}};
 
 const TAB_STOP_LENGTH: u16 = 8;
 
@@ -58,17 +58,18 @@ struct EditorState {
 }
 
 impl EditorState {
-    fn init() -> Self {
-        Self {
+    fn init() -> crossterm::Result<Self> {
+        let (columns, rows) = size()?;
+        Ok(Self {
             cursor_row: 0,
             cursor_col: 0,
             row_offset: 0,
             col_offset: 0,
-            screen_rows: 0,
-            screen_cols: 0,
+            screen_rows: rows,
+            screen_cols: columns,
             rows: Vec::new(),
             file_name: String::new(),
-        }
+        })
     }
 
     fn move_cursor(&mut self, direction: Direction) {
@@ -179,8 +180,12 @@ impl EditorState {
             };
             execute!(stdout(), Clear(ClearType::CurrentLine))?;
             stdout().write(row_text.as_bytes())?;
-            stdout().write("\r\n".as_bytes())?;
+            if row_num < self.screen_rows - 1{
+                stdout().write("\r\n".as_bytes())?;
+            }
         }
+
+        stdout().flush()?;
 
         Ok(())
     }
@@ -192,7 +197,7 @@ impl EditorState {
 
         self.draw_rows()?;
 
-        execute!(stdout(), MoveTo(self.cursor_col, self.cursor_row), Show)?;
+        execute!(stdout(), MoveTo(self.cursor_col - self.col_offset, self.cursor_row - self.row_offset), Show)?;
 
         Ok(())
     }
@@ -212,8 +217,9 @@ fn event_loop(state: &mut EditorState) -> crossterm::Result<()> {
 
         match event {
             Event::Resize(columns, rows) => {
-                state.screen_cols = columns;
-                state.screen_rows = rows;
+                // I have no idea why these plus 1s are need but they are
+                state.screen_cols = columns + 1;
+                state.screen_rows = rows + 1;
             }
             Event::Key(key) => {
                 state.handle_keypress(key);
@@ -224,19 +230,21 @@ fn event_loop(state: &mut EditorState) -> crossterm::Result<()> {
 }
 
 fn setup() -> crossterm::Result<()> {
+    execute!(stdout(), EnterAlternateScreen)?;
     enable_raw_mode()?;
-    execute!(stdout(), EnterAlternateScreen)
+    Ok(())
 }
 
 fn cleanup() -> crossterm::Result<()> {
+    disable_raw_mode()?;
     execute!(stdout(), LeaveAlternateScreen)?;
-    disable_raw_mode()
+    Ok(())
 }
 
 fn run() -> crossterm::Result<()> {
     setup()?;
 
-    let mut state = EditorState::init();
+    let mut state = EditorState::init()?;
     state.load_file("./src/main.rs")?;
 
     event_loop(&mut state)?;
